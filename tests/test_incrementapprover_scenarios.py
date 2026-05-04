@@ -21,6 +21,7 @@ from openqabot.errors import AmbiguousApprovalStatusError
 from openqabot.incrementapprover import IncrementApprover
 from openqabot.loader.config import get_configs_from_path
 from openqabot.loader.incrementconfig import IncrementConfig
+from openqabot.repodiff import Package
 from openqabot.types.increment import ApprovalStatus, BuildIdentifier, BuildInfo
 
 from .helpers import (

@@ -27,13 +27,14 @@ from .errors import AmbiguousApprovalStatusError, PostOpenQAError
 from .loader.buildinfo import load_build_info
 from .loader.incrementconfig import GroupKey, IncrementConfig
 from .loader.sourcereport import compute_packages_of_request_from_source_report
-from .repodiff import Package, RepoDiff
 from .requests import find_request_on_obs
 from .types.increment import ApprovalStatus, BuildIdentifier, BuildInfo
 from .utils import merge_dicts, unique_dicts
 
 if TYPE_CHECKING:
     from argparse import Namespace
+
+    from .repodiff import Package
 
 log = getLogger("bot.increment_approver")
 ok_results = {"passed", "softfailed"}
@@ -320,57 +321,10 @@ class IncrementApprover:
             self.package_diff[diff_key] = package_diff
         return package_diff
 
-    def get_package_diff_from_repo(
-        self, config_inc: IncrementConfig, repo_sub_path: str, build_info: BuildInfo | None = None
-    ) -> defaultdict[str, set[Package]]:
-        """Compute package diff by comparing repositories."""
-        build_project = config_inc.build_project() + repo_sub_path
-
-        is_reference_repo = False
-        diff_project = config_inc.diff_project()
-        if build_info and build_info.flavor in config_inc.reference_repos:
-            is_reference_repo = True
-            diff_project = config_inc.reference_repos[build_info.flavor]
-
-            channel = build_info.flavor.removesuffix(f"-{config_inc.flavor_suffix}")
-            params = {
-                "base": "",
-                "project": config_inc.build_project(),
-                "version": build_info.version,
-                "arch": build_info.arch,
-                "channel": channel,
-                "suffix": config_inc.diff_project_suffix,
-                "product": build_info.product,
-            }
-            build_project = (
-                config_inc.build_repo_template.format(**(params | {"base": build_project}))
-                if config_inc.build_repo_template
-                else f"{build_project}/{channel}/{build_info.arch}"
-            )
-            diff_project = (
-                config_inc.diff_repo_template.format(**(params | {"base": diff_project}))
-                if config_inc.diff_repo_template
-                else f"{diff_project}/{build_info.version}/{config_inc.diff_project_suffix}/{build_info.arch}"
-            )
-
-        if not is_reference_repo and any(s in diff_project for s in ("-Debug", "-Source")):
-            log.debug("Skipping repo diffing for %s (contains -Debug or -Source)", diff_project)
-            return defaultdict(set)
-
-        diff_key = f"{build_project}:{diff_project}"
-        if diff_key in self.package_diff:
-            return self.package_diff[diff_key]
-
-        log.debug("Computing repo diff to project %s", diff_project)
-        self.package_diff[diff_key] = RepoDiff(self.args).compute_diff(diff_project, build_project)[0]
-        return self.package_diff[diff_key]
-
     def get_package_diff(
         self,
         request: osc.core.Request | None,
         config_inc: IncrementConfig,
-        repo_sub_path: str,
-        build_info: BuildInfo | None = None,
     ) -> defaultdict[str, set[Package]]:
         """Get the package diff for a configuration."""
         if config_inc.diff_project_suffix == "source-report":
@@ -378,9 +332,6 @@ class IncrementApprover:
                 log.error("Source report diff requested but no request found")
                 return defaultdict(set)
             return self.get_package_diff_from_source_report(request)
-
-        if config_inc.diff_project_suffix != "none":
-            return self.get_package_diff_from_repo(config_inc, repo_sub_path, build_info)
 
         return defaultdict(set)
 
@@ -403,7 +354,7 @@ class IncrementApprover:
         base_params.update(config_inc.settings)
         extra_params = []
         if config_inc.diff_project_suffix != "none":
-            package_diff = self.get_package_diff(request, config_inc, repo_sub_path, build_info)
+            package_diff = self.get_package_diff(request, config_inc)
             relevant_diff = package_diff[build_info.arch] | package_diff["noarch"]
             # schedule base params if package filter is empty for matching
             if IncrementApprover.match_packages(relevant_diff, config_inc.packages):
