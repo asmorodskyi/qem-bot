@@ -5,193 +5,157 @@
 from __future__ import annotations
 
 import gzip
-import json
-import re
-import sys
-from collections import defaultdict
+import tempfile
 from logging import getLogger
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
+import librepo  # ty: ignore[unresolved-import]
 import pyzstd
-import requests
 from lxml import etree  # ty: ignore[unresolved-import]
 
 from .config import settings
-from .utils import get_obs_filter_params
-from .utils import retry10 as retried_requests
 
 if TYPE_CHECKING:
     from argparse import Namespace
 
 log = getLogger("bot.repo_diff")
-ns = "{http://linux.duke.edu/metadata/common}"
-package_tag = ns + "package"
-name_tag = ns + "name"
-version_tag = ns + "version"
-arch_tag = ns + "arch"
-primary_re = re.compile(r".*-primary.xml(?:.(gz|zst))?$")
 
 
 class Package(NamedTuple):
     """Information about a package."""
 
     name: str
-    epoch: str
     version: str
-    rel: str
+    release: str
     arch: str
+
+    @property
+    def evr(self) -> str:
+        """Version-Release string."""
+        return f"{self.version}-{self.release}"
 
 
 class RepoDiff:
     """Repository diff computation."""
 
-    def __init__(self, args: Namespace | None) -> None:
+    # XML namespace handling
+    ns: dict[str, str] = {"common": "http://linux.duke.edu/metadata/common"}
+
+    def __init__(self, repo_a: str, repo_b: str) -> None:
         """Initialize the RepoDiff class."""
-        self.args = args
+        self.repo_a = self.make_repodata_url(repo_a)
+        self.repo_b = self.make_repodata_url(repo_b)
+        self.package_diff: set[Package] = set()
+        log.info("Init repo comparison class for %s and %s", self.repo_a, self.repo_b)
 
     def make_repodata_url(self, project: str) -> str:  # noqa: PLR6301
         """Construct the URL for repository metadata."""
         path = project.replace(":", ":/")
-        return f"{settings.obs_download_url}/{path}/repodata/"
+        return f"{settings.obs_download_url}/{path}"
 
-    def find_primary_repodata(self, rows: list[dict[str, Any]]) -> str | None:  # noqa: PLR6301
-        """Find the primary XML metadata file in a list of repository files."""
-        return next((r["name"] for r in rows if primary_re.search(r.get("name", ""))), None)
+    def load_repo_packages(self, repo_url: str) -> set[Package]:
+        """Load package metadata from a repository using librepo.
 
-    @staticmethod
-    def decompress(repo_data_file: str, repo_data_raw: bytes) -> bytes:
-        """Decompress repository metadata if it is compressed."""
-        if repo_data_file.endswith(".gz"):
-            return gzip.decompress(repo_data_raw)
-        if repo_data_file.endswith(".zst"):
-            return pyzstd.decompress(repo_data_raw)
-        return repo_data_raw
+        Args:
+            repo_url: URL or path to the repository
 
-    def request_and_dump(
-        self,
-        url: str,
-        name: str,
-        *,
-        as_json: bool = False,
-        params: dict[str, Any] | None = None,
-    ) -> bytes | dict[str, Any] | None:
-        """Fetch data from a URL and optionally dump it to a file for fake data usage."""
-        log.debug("Fetching repository data from %s", url)
-        name = "tests/fixtures/responses/" + name.replace("/", "_")
-        fake_data = self.args is not None and self.args.fake_data
-        source = name if fake_data else url
-        try:
-            if fake_data:
-                content = Path(name).read_bytes()
+        Returns:
+            Set of Package objects from the repository
+
+        """
+        packages = set()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log.debug("Load packages from %s", repo_url)
+            h = librepo.Handle()
+            h.repotype = librepo.LR_YUMREPO
+            h.urls = [repo_url]
+            h.destdir = tmpdir
+            h.yumdlist = ["primary"]
+
+            try:
+                result = h.perform()
+            except librepo.LibrepoException:
+                log.exception("Failed to fetch repodata from %s", repo_url)
+                raise
+
+            primary_local_path = result.yum_repo["primary"]
+
+            if primary_local_path.endswith(".gz"):
+                opener = gzip.open
+            elif primary_local_path.endswith(".zst"):
+                opener = pyzstd.open
             else:
-                resp = retried_requests.get(url, params=params)
-                if not resp.ok:
-                    log.info("Failed to fetch data from %s: %s %s", source, resp.status_code, resp.reason)
-                    return None
-                content = resp.content
-                if self.args is not None and self.args.dump_data:
-                    Path(name).write_bytes(content)
+                opener = open
 
-            return json.loads(content) if as_json else content
-        except (FileNotFoundError, PermissionError):
-            log.info("Failed to read %s: File not found", source)
-        except (json.JSONDecodeError, requests.exceptions.JSONDecodeError):
-            log.info("Failed to parse %s", source)
-        except Exception:
-            log.exception("Failed to fetch or dump data from %s", source)
-        return None
+            log.debug("Build xml tree for primary.xml from %s", repo_url)
 
-    def load_repodata(self, project: str) -> etree.Element | None:
-        """Load and parse repository primary metadata for an OBS project."""
-        url = self.make_repodata_url(project)
-        repo_data_listing = self.request_and_dump(
-            url,
-            f"repodata-listing-{project}.json",
-            as_json=True,
-            params=get_obs_filter_params(r".*-primary\.xml.*"),
-        )
-        if not repo_data_listing or not isinstance(repo_data_listing, dict):
-            log.error("Could not load repo data for project %s", project)
-            return None
+            with opener(primary_local_path, "rb") as f:
+                tree = etree.parse(f)
+                root = tree.getroot()
 
-        rows = repo_data_listing.get("data", [])
-        repo_data_file = self.find_primary_repodata(rows)
-        if repo_data_file is None:
-            log.warning("Repository metadata not found: Primary repodata missing in %s", url)
-            return None
-        repo_data_raw = self.request_and_dump(url + repo_data_file, repo_data_file)
-        if not isinstance(repo_data_raw, bytes):
-            return None
-        repo_data = RepoDiff.decompress(repo_data_file, repo_data_raw)
-        log.debug("Parsing repository metadata file: %s", repo_data_file)
-        return etree.fromstring(repo_data)
+                for package in root.findall("common:package", RepoDiff.ns):
+                    name_elem = package.find("common:name", RepoDiff.ns)
+                    version_elem = package.find("common:version", RepoDiff.ns)
+                    arch_elem = package.find("common:arch", RepoDiff.ns)
 
-    def load_packages(self, project: str) -> defaultdict[str, set[Package]]:
-        """Load the list of packages from an OBS project repository."""
-        repo_data = self.load_repodata(project)
-        packages_by_arch = defaultdict(set)
-        if repo_data is None or not hasattr(repo_data, "iterfind"):
-            log.error("Could not load repo data for project %s", project)
-            return packages_by_arch
-        log.debug("Loading package list for project %s", project)
-        for package in repo_data.iterfind(package_tag):
-            if package.get("type") != "rpm":
-                continue
-            name = package.find(name_tag).text
-            version_info = package.find(version_tag)
-            epoch = version_info.get("epoch", "0")
-            version = version_info.get("ver", "0")
-            rel = version_info.get("rel", "0")
-            arch = package.find(arch_tag).text
-            packages_by_arch[arch].add(Package(name, epoch, version, rel, arch))
-        return packages_by_arch
+                    if name_elem is not None and version_elem is not None and arch_elem is not None:
+                        pkg_info = Package(
+                            name=name_elem.text,
+                            version=version_elem.get("ver", ""),
+                            release=version_elem.get("rel", ""),
+                            arch=arch_elem.text,
+                        )
+                        packages.add(pkg_info)
+            log.debug("%d packages found", len(packages))
 
-    @staticmethod
-    def compute_diff_for_packages(
-        repo_a: str,
-        packages_by_arch_a: defaultdict[str, set[Package]],
-        repo_b: str,
-        packages_by_arch_b: defaultdict[str, set[Package]],
-    ) -> tuple[defaultdict[str, set[Package]], int]:
-        """Compute the difference between two sets of packages grouped by architecture."""
-        diff_by_arch = defaultdict(set)
-        count = 0
-        for arch, packages_b in packages_by_arch_b.items():
-            packages_a = packages_by_arch_a[arch]
-            log.debug("Found %d packages for architecture %s in repository %s", len(packages_a), arch, repo_a)
-            log.debug("Found %d packages for architecture %s in repository %s", len(packages_b), arch, repo_b)
-            diff = packages_b - packages_a
-            count += len(diff)
-            diff_by_arch[arch] = diff
-        return (diff_by_arch, count)
+            return packages
 
-    def compute_diff(self, repo_a: str, repo_b: str) -> tuple[defaultdict[str, set[Package]], int]:
-        """Compute the package diff between two OBS projects."""
-        try:
-            packages_by_arch_a = self.load_packages(repo_a)
-            packages_by_arch_b = self.load_packages(repo_b)
-            return RepoDiff.compute_diff_for_packages(repo_a, packages_by_arch_a, repo_b, packages_by_arch_b)
-        except Exception:
-            log.exception("Repo diff computation failed for projects %s and %s", repo_a, repo_b)
-            return defaultdict(set), 0
+    def compare_repos(self) -> set[Package]:
+        """Compare two repositories and return differences."""
+        packages_a = self.load_repo_packages(self.repo_a)
+        packages_b = self.load_repo_packages(self.repo_b)
+
+        log.debug("Performing comparison")
+
+        old_by_name_arch = {(pkg.name, pkg.arch): pkg for pkg in packages_a}
+        new_by_name_arch = {(pkg.name, pkg.arch): pkg for pkg in packages_b}
+
+        modified = set()
+
+        # Find added and updated packages
+        for key, new_pkg in new_by_name_arch.items():
+            if key not in old_by_name_arch:
+                # New package (didn't exist before)
+                modified.add(new_pkg)
+            else:
+                old_pkg = old_by_name_arch[key]
+                if old_pkg.evr != new_pkg.evr:
+                    # Package version changed
+                    modified.add(new_pkg)
+        self.package_diff.update(modified)
+
+        return modified
+
+    def filter_package_diff(self, arch_filter: str, name_filter: str) -> set[Package]:
+        """Filter package diff by arch"""
+        return {
+            package
+            for package in self.package_diff
+            if package.arch in {arch_filter, "noarch"} and name_filter in package.name
+        }
 
     def __call__(self) -> int:
         """Run the repository diff computation."""
-        args = self.args
-        if args is None:
-            log.error("RepoDiff called without arguments")
-            return 1
         try:
-            diff, count = self.compute_diff(args.repo_a, args.repo_b)
-        except FileNotFoundError as e:
-            log.critical("Failed to load fake data: %s (use --dump-data to generate it)", e)
-            raise SystemExit from None
-        log.debug(
+            self.compare_repos()
+        except Exception:
+            log.exception("Repo diff computation failed for projects %s and %s", self.repo_a, self.repo_b)
+            return 1
+        log.info(
             "Repository %s has %d new packages compared to %s",
-            args.repo_b,
-            count,
-            args.repo_a,
+            self.repo_b,
+            len(self.package_diff),
+            self.repo_a,
         )
-        sys.stdout.write(json.dumps(diff, indent=4, default=list) + "\n")
-        return len(diff)
+        return 0
