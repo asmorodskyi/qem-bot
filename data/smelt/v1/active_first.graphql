@@ -1,0 +1,1 @@
+{ incidents(status_Name_Iexact:"active", first: 100 ) { pageInfo { hasNextPage endCursor} edges { node { incidentId }}}}

@@ -1,0 +1,49 @@
+{
+    "type": "object",
+    "properties": {
+        "data": {
+            "type": "object",
+            "properties": {
+                "incidents": {
+                    "type": "object",
+                    "properties": {
+                        "edges": {
+                            "type": "array",
+                            "items": {
+                                "node": {
+                                    "type": "object",
+                                    "properties": {
+                                        "emu": {
+                                            "type": "boolean"
+                                        },
+                                        "project": {
+                                            "type": "string"
+                                        },
+                                        "repositories": {
+                                            "type": "object"
+                                        },
+                                        "packages": {
+                                            "type": "object"
+                                        },
+                                        "requestSet": {
+                                            "type": "object"
+                                        },
+                                        "crd": {
+                                            "type": "string"
+                                        },
+                                        "priority": {
+                                            "type": "number"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "required": ["edges"]
+                }
+            },
+            "required": ["incidents"]
+        }
+    },
+    "required": ["data"]
+}

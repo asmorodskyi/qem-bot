@@ -67,6 +67,7 @@ class Settings(BaseSettings):
         return urljoin(self.qem_dashboard_url, "/".join(str(p).strip("/") for p in path))
 
     smelt_url: str = Field(default="https://smelt.suse.de", alias="SMELT_URL")
+    smelt_query_version: str = Field(default="v1", alias="SMELT_QUERY_VERSION")
     gitea_url: str = Field(default="https://src.suse.de", alias="GITEA_URL")
     insecure: bool = Field(default=False, alias="QEM_BOT_INSECURE")
     obs_url: str = Field(default_factory=get_default_obs_url, alias="OBS_URL")
@@ -110,6 +111,11 @@ class Settings(BaseSettings):
     def smelt_graphql(self) -> str:
         """Return the SMELT GraphQL API URL."""
         return self.smelt_url + "/graphql"
+
+    @property
+    def smelt_queries_dir(self) -> Path:
+        """Return the path to versioned SMELT query/schema files."""
+        return self.configs / "smelt" / self.smelt_query_version
 
     @property
     def obs_web_url(self) -> str:

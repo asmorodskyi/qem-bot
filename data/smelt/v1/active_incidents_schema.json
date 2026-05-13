@@ -1,0 +1,44 @@
+{
+    "type": "object",
+    "properties": {
+        "data": {
+            "type": "object",
+            "properties": {
+                "incidents": {
+                    "type": "object",
+                    "properties": {
+                        "edges": {
+                            "type": "array",
+                            "items": {
+                                "node": {
+                                    "type": "object",
+                                    "properties": {
+                                        "incidentId": {
+                                            "type": "number"
+                                        }
+                                    },
+                                    "required": ["incidentId"]
+                                }
+                            }
+                        },
+                        "pageInfo": {
+                            "type": "object",
+                            "properties": {
+                                "hasNextPage": {
+                                    "type": "boolean"
+                                },
+                                "endCursor": {
+                                    "type": "string"
+                                }
+                            },
+                            "required": ["hasNextPage", "endCursor"]
+                        }
+                    },
+                    "required": ["edges", "pageInfo"]
+                }
+            },
+            "required": ["incidents"]
+        }
+    },
+    "required": ["data"]
+}
