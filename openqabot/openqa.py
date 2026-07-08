@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, fields
 from functools import lru_cache
 from http import HTTPStatus
 from itertools import batched
@@ -33,6 +34,41 @@ log = logging.getLogger("bot.openqa")
 
 MAX_JOBS_PER_API_REQUEST = 200
 ENRICH_KEYS = ("group_id", "group", "build", "distri", "version", "flavor", "arch", "name")
+
+
+@dataclass
+class OpenQAJob:
+    id: int
+    name: str
+    distri: str
+    group_id: int
+    version: str
+    arch: str
+    flavor: str
+    state: str
+    build: str
+    clone_id: int | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> OpenQAJob:
+        valid_fields = {f.name for f in fields(cls)}
+        filtered_data = {k: v for k, v in data.items() if k in valid_fields}
+        job_results_mapping = {
+            "passed": "passed",
+            "softfailed": "passed",
+            "none": "waiting",
+            "timeout_exceeded": "stopped",
+            "incomplete": "stopped",
+            "obsoleted": "stopped",
+            "parallel_failed": "stopped",
+            "skipped": "stopped",
+            "parallel_restarted": "stopped",
+            "user_cancelled": "stopped",
+            "user_restarted": "stopped",
+            "failed": "failed",
+        }
+        filtered_data["state"] = job_results_mapping.get(filtered_data["state"], "failed")
+        return cls(**filtered_data)
 
 
 class OpenQAInterface:
@@ -81,7 +117,7 @@ class OpenQAInterface:
         log.info("Job %s not found on openQA, marking as obsolete on dashboard", job_id)
         update_job(job_id, {"obsolete": True})
 
-    def get_jobs(self, data: Data) -> list[dict[str, Any]]:
+    def get_jobs(self, data: Data) -> list[OpenQAJob]:
         """Fetch openQA jobs matching the given criteria."""
         log.debug("Fetching openQA jobs for %s", pformat(data))
         param = {
@@ -93,7 +129,7 @@ class OpenQAInterface:
             "version": data.version,
             "arch": data.arch,
         }
-        return self.openqa.openqa_request("GET", "jobs", param)["jobs"]
+        return [OpenQAJob.from_dict(j) for j in self.openqa.openqa_request("GET", "jobs", param)["jobs"]]
 
     @lru_cache(maxsize=512)  # noqa: B019
     def get_job_comments(self, job_id: int) -> list[dict[str, str]]:

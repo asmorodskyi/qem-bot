@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from .config import settings
 from .loader.qem import post_job
-from .openqa import OpenQAInterface
+from .openqa import OpenQAInterface, OpenQAJob
 from .utils import normalize_results
 
 if TYPE_CHECKING:
@@ -59,7 +59,7 @@ class SyncRes:
         except KeyError:
             return None
 
-    def filter_jobs(self, data: dict[str, Any]) -> bool:
+    def filter_jobs(self, job: OpenQAJob) -> bool:
         """Filter out invalid/development jobs from results."""
         if "group" not in data:
             return False
