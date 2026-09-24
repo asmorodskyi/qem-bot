@@ -582,12 +582,12 @@ def add_build_results(submission: dict[str, Any], obs_urls: list[str], *, dry: b
 
     if results.unpublished:
         log.info(
-            "PR git:%i: Some repos not published yet: %s",
+            "PR git:%s: Some repos not published yet: %s",
             submission["number"],
             ", ".join(results.unpublished),
         )
     if results.failed:
-        log.info("PR git:%i: Some packages failed: %s", submission["number"], ", ".join(results.failed))
+        log.info("PR git:%s: Some packages failed: %s", submission["number"], ", ".join(results.failed))
 
     submission.update({
         "failed_or_unpublished_packages": sorted(results.failed | results.unpublished | results.unavailable),
@@ -695,7 +695,7 @@ def _fetch_details(
 def _init_submission_dict(pr: PullRequest) -> dict[str, Any]:
     """Initialize a submission dictionary with default values from a PR."""
     return {
-        "number": pr.number,
+        "number": f"{pr.project}:{pr.number}",
         "project": pr.project,
         # "Emergency Maintenance Update", a flag used to raise a priority in scheduler
         # see openqabot/types/incidents.py#L227

@@ -29,6 +29,10 @@ class OpenQABot:
         self.ignore_onetime = args.ignore_onetime
         self.submission_arg = args.submission if hasattr(args, "submission") else None
         self.submissions = get_submissions(self.submission_arg)
+        if hasattr(args, "gitea_project") and args.gitea_project and not self.submission_arg:
+            projects = set(args.gitea_project if isinstance(args.gitea_project, list) else [args.gitea_project])
+            self.submissions = [s for s in self.submissions if s.type == "git" and s.project in projects]
+            log.info("Filtered submissions to projects: %s", ", ".join(sorted(projects)))
         log.info("Loaded %s submissions from QEM Dashboard", len(self.submissions))
 
         for sub in self.submissions:

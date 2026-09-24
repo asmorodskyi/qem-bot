@@ -103,7 +103,7 @@ class ProdVer(NamedTuple):
 class Data(NamedTuple):
     """Common data for dashboard and openQA."""
 
-    submission: int
+    submission: int | str
     submission_type: str
     settings_id: int
     flavor: str
@@ -115,7 +115,7 @@ class Data(NamedTuple):
 
     @classmethod
     def from_trigger_config_and_matched_iso(
-        cls, trigger_config: TriggerConfig, matched_iso: IsoMatch, submission_id: int
+        cls, trigger_config: TriggerConfig, matched_iso: IsoMatch, submission_id: int | str
     ) -> Data:
         """Generate Data object from TriggerConfig and IsoMatch."""
         return cls(

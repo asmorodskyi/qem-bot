@@ -29,7 +29,7 @@ log = getLogger("bot.loader.qem")
 class SubReq(NamedTuple):
     """Submission and release request IDs."""
 
-    sub: int
+    sub: int | str
     req: int
     type: str | None = None
     url: str | None = None
@@ -64,7 +64,7 @@ class LoaderQemError(Exception):
 class NoSubmissionResultsError(NoResultsError):
     """Raised when no submission results are found."""
 
-    def __init__(self, sub: int) -> None:
+    def __init__(self, sub: int | str) -> None:
         """Initialize the NoSubmissionResultsError class."""
         super().__init__(f"No submission test results found for {sub}")
 
@@ -72,12 +72,12 @@ class NoSubmissionResultsError(NoResultsError):
 class NoAggregateResultsError(NoResultsError):
     """Raised when no aggregate results are found."""
 
-    def __init__(self, sub: int) -> None:
+    def __init__(self, sub: int | str) -> None:
         """Initialize the NoAggregateResultsError class."""
         super().__init__(f"No aggregate test results found for {sub}")
 
 
-def _get_submission(submission_id: int, submission_type: str | None = None) -> dict:
+def _get_submission(submission_id: int | str, submission_type: str | None = None) -> dict:
     """Fetch a single submission's raw data from the dashboard."""
     params = {}
     if submission_type:
@@ -90,8 +90,26 @@ def _get_submission(submission_id: int, submission_type: str | None = None) -> d
 def get_submissions(submission: str | None = None) -> list[Submission]:
     """Fetch all or a specific submission from the dashboard and wrap them in Submission objects."""
     if submission:
-        s_type, s_id = submission.split(":")
-        res = _get_submission(int(s_id), s_type)
+        parts = submission.split(":", 1)
+        s_type = parts[0]
+        s_id = parts[1] if len(parts) > 1 else None
+
+        if not s_id:
+            log.error("Invalid submission format: %s", submission)
+            sys.exit(1)
+
+        if s_type == "git" and ":" in s_id:
+            s_id_number = s_id.rsplit(":", 1)[-1]
+        else:
+            s_id_number = s_id
+
+        try:
+            numeric_id = int(s_id_number)
+        except ValueError:
+            log.error("Invalid submission format: %s", submission)
+            sys.exit(1)
+
+        res = _get_submission(numeric_id, s_type)
         if isinstance(res, dict) and "error" in res:
             log.error("Submission %s:%s was not found on the QEM Dashboard or is invalid.", s_type, s_id)
             log.error("Dashboard error details: %s", res.get("error"))
@@ -111,7 +129,7 @@ def get_submissions(submission: str | None = None) -> list[Submission]:
     return [sub for s in submissions if (sub := Submission.create(s))]
 
 
-def get_active_submissions(submission_type: str | None = None) -> Sequence[int]:
+def get_active_submissions(submission_type: str | None = None) -> Sequence[int | str]:
     """Fetch IDs of all active submissions from the dashboard."""
     params = {}
     if submission_type:
@@ -126,14 +144,14 @@ def get_submissions_approver() -> list[SubReq]:
     return [SubReq.from_dashboard(i) for i in submissions if i["inReviewQAM"]]
 
 
-def get_single_submission(submission_id: int, submission_type: str | None = None) -> list[SubReq]:
+def get_single_submission(submission_id: int | str, submission_type: str | None = None) -> list[SubReq]:
     """Fetch a single submission and wrap it in a list of SubReq objects."""
     submission = _get_submission(submission_id, submission_type)
     return [SubReq.from_dashboard(submission)]
 
 
 def get_submission_settings(
-    sub: int, *, all_submissions: bool = False, submission_type: str | None = None
+    sub: int | str, *, all_submissions: bool = False, submission_type: str | None = None
 ) -> list[JobAggr]:
     """Fetch job settings associated with a submission."""
     params = {}
@@ -155,7 +173,7 @@ def get_submission_settings(
     return [JobAggr(i["id"], aggregate=False, with_aggregate=i["withAggregate"]) for i in settings]
 
 
-def get_submission_settings_data(number: int, submission_type: str | None = None) -> Sequence[Data]:
+def get_submission_settings_data(number: int | str, submission_type: str | None = None) -> Sequence[Data]:
     """Fetch job settings data for a submission and wrap them in Data objects."""
     log.debug(
         "Fetching settings for submission %s:%s", submission_type or config.settings.default_submission_type, number
@@ -191,7 +209,7 @@ def get_submission_settings_data(number: int, submission_type: str | None = None
     ]
 
 
-def get_submission_results(sub: int, submission_type: str | None = None) -> list[dict[str, Any]]:
+def get_submission_results(sub: int | str, submission_type: str | None = None) -> list[dict[str, Any]]:
     """Fetch all test results associated with a submission."""
     settings = get_submission_settings(sub, all_submissions=False, submission_type=submission_type)
 
@@ -208,7 +226,7 @@ def get_submission_results(sub: int, submission_type: str | None = None) -> list
     return list(chain.from_iterable(all_data))
 
 
-def get_aggregate_settings(sub: int, submission_type: str | None = None) -> list[JobAggr]:
+def get_aggregate_settings(sub: int | str, submission_type: str | None = None) -> list[JobAggr]:
     """Fetch aggregate job settings associated with a submission."""
     params = {}
     if submission_type:
@@ -244,7 +262,7 @@ def get_aggregate_settings_data(data: Data) -> Sequence[Data]:
     return [data._replace(settings_id=s["id"], build=s["build"]) for s in settings[:3]]
 
 
-def get_aggregate_results(sub: int, submission_type: str | None = None) -> list[dict[str, Any]]:
+def get_aggregate_results(sub: int | str, submission_type: str | None = None) -> list[dict[str, Any]]:
     """Fetch all aggregate test results associated with a submission."""
     settings = get_aggregate_settings(sub, submission_type=submission_type)
 
@@ -311,7 +329,7 @@ def update_job(job_id: int, data: dict[str, Any]) -> None:
         log.exception("QEM Dashboard API request failed")
 
 
-def update_incident_reason(incident_number: int, reason: str | None) -> None:
+def update_incident_reason(incident_number: int | str, reason: str | None) -> None:
     """Update the rejection reason for a submission on the dashboard."""
     try:
         result = dashboard.patch(

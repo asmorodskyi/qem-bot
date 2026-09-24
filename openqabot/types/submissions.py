@@ -269,11 +269,17 @@ class Submissions(BaseConf):
     @staticmethod
     def add_metadata_urls(settings_data: dict[str, Any], sub: Submission) -> None:
         """Add source and dashboard URLs to settings."""
-        url = (
-            f"{settings.gitea_url}/products/{sub.project}/pulls/{sub.id}"
-            if get_channel_type(sub.project) == ChannelType.SLFO
-            else f"{settings.smelt_url}/incident/{sub.id}"
-        )
+        if sub.is_gitea:
+            if ":" in str(sub.id):
+                project, pr_number = str(sub.id).rsplit(":", 1)
+            else:
+                project = sub.project
+                pr_number = sub.id
+
+            url = f"{settings.gitea_url}/{project}/pulls/{pr_number}"
+        else:
+            url = f"{settings.smelt_url}/incident/{sub.id}"
+
         settings_data["__SOURCE_CHANGE_URL"] = url
         settings_data["__DASHBOARD_INCIDENT_URL"] = settings.dashboard_url("incident", sub.id)
 

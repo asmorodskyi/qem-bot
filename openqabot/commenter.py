@@ -57,7 +57,7 @@ class Commenter:
             log.debug("Submission %s skipped: Not a SMELT incident or Gitea PR (type: %s)", sub, sub.type)
             return
 
-        def get_jobs(func: Callable[[int, str | None], list[dict[str, Any]]]) -> list[dict[str, Any]]:
+        def get_jobs(func: Callable[[int | str, str | None], list[dict[str, Any]]]) -> list[dict[str, Any]]:
             try:
                 return func(sub.id, sub.type)
             except (ValueError, NoResultsError) as e:
@@ -172,7 +172,8 @@ class Commenter:
         # Add a marker so we can find our own comments later
         msg = add_marker(msg, "openqa", {"state": state})
 
-        comments = gitea.iter_gitea_items(gitea.comments_url(repo, sub.id), self.gitea_token)
+        pr_number = int(str(sub.id).rsplit(":", 1)[-1]) if ":" in str(sub.id) else int(sub.id)
+        comments = gitea.iter_gitea_items(gitea.comments_url(repo, pr_number), self.gitea_token)
         formatted = {str(c["id"]): {"id": c["id"], "comment": c["body"]} for c in comments}
         comment, info = self.commentapi.comment_find(formatted, "openqa")
 
@@ -190,7 +191,7 @@ class Commenter:
         # Unlike OBS (delete + add), Gitea supports PATCH to update in-place,
         # avoiding notification noise from a delete event followed by a new comment.
         if comment is None:
-            gitea.post_json(gitea.comments_url(repo, sub.id), self.gitea_token, {"body": msg})
+            gitea.post_json(gitea.comments_url(repo, pr_number), self.gitea_token, {"body": msg})
         else:
             gitea.patch_json(f"repos/{repo}/issues/comments/{comment['id']}", self.gitea_token, {"body": msg})
 

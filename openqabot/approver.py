@@ -226,7 +226,7 @@ class Approver:
         # everything is green --> add submission to approve list
         return True
 
-    def mark_job_as_acceptable_for_submission(self, job_id: int, sub: int) -> None:
+    def mark_job_as_acceptable_for_submission(self, job_id: int, sub: int | str) -> None:
         """Mark a job as acceptable for a submission in the dashboard."""
         try:
             dashboard.patch(
@@ -235,7 +235,7 @@ class Approver:
             )
         except RequestError as e:
             log.info(
-                "Unable to mark job %i as acceptable for submission %s:%i: %s",
+                "Unable to mark job %i as acceptable for submission %s:%s: %s",
                 job_id,
                 self.submission_type or config.settings.default_submission_type,
                 sub,
@@ -243,7 +243,7 @@ class Approver:
             )
 
     @lru_cache(maxsize=512)  # ruff: ignore[cached-instance-method]
-    def is_job_marked_acceptable_for_submission(self, job_id: int, sub: int) -> bool:
+    def is_job_marked_acceptable_for_submission(self, job_id: int, sub: int | str) -> bool:
         """Check if a job is marked as acceptable for a submission."""
         regex = re.compile(ACCEPTABLE_FOR_TEMPLATE.format(sub=sub), re.DOTALL)
         try:
@@ -271,7 +271,7 @@ class Approver:
         return True
 
     @lru_cache(maxsize=16384)  # ruff: ignore[cached-instance-method]
-    def job_contains_submission(self, job_id: int, sub: int) -> bool:
+    def job_contains_submission(self, job_id: int, sub: int | str) -> bool:
         """Check if a job settings contain the submission under test."""
         job_settings = self.client.get_single_job(job_id)
         if not job_settings:
@@ -281,7 +281,7 @@ class Approver:
     def was_older_job_ok(
         self,
         not_ok_job_id: int,
-        sub: int,
+        sub: int | str,
         job: dict,
         oldest_build_usable: datetime,
     ) -> OlderJobResult:
@@ -330,7 +330,7 @@ class Approver:
         return OlderJobResult.OK
 
     @lru_cache(maxsize=512)  # ruff: ignore[cached-instance-method]
-    def was_ok_before(self, not_ok_job_id: int, sub: int) -> bool:
+    def was_ok_before(self, not_ok_job_id: int, sub: int | str) -> bool:
         """Check if a similar job was successful before."""
         # We need a considerable amount of older jobs, since there could be many failed manual restarts from same day
         jobs = self.client.get_older_jobs(not_ok_job_id, 20)
@@ -365,7 +365,7 @@ class Approver:
         """Check if a job result status is passed."""
         return job_result["status"] == "passed"
 
-    def mark_jobs_as_acceptable_for_submission(self, job_results: list[dict], sub: int) -> None:
+    def mark_jobs_as_acceptable_for_submission(self, job_results: list[dict], sub: int | str) -> None:
         """Mark not-ok jobs as acceptable if they have corresponding openQA comments."""
         for job_result in job_results:
             if self.is_job_passing(job_result):
@@ -379,7 +379,7 @@ class Approver:
                 job_result["obsolete"] = True
                 self.client.handle_job_not_found(job_id)
 
-    def is_job_acceptable(self, sub: int, api: str, job_result: dict, submission_type: str | None = None) -> bool:
+    def is_job_acceptable(self, sub: int | str, api: str, job_result: dict, submission_type: str | None = None) -> bool:
         """Determine if a job result is acceptable for approval."""
         if self.is_job_passing(job_result):
             return True
@@ -410,7 +410,7 @@ class Approver:
         return False
 
     @lru_cache(maxsize=128)  # ruff: ignore[cached-instance-method]
-    def get_jobs(self, job_aggr: JobAggr, api: str, sub: int, submission_type: str | None = None) -> JobResult:
+    def get_jobs(self, job_aggr: JobAggr, api: str, sub: int | str, submission_type: str | None = None) -> JobResult:
         """Retrieve jobs for a specific aggregate or incident setting.
 
         Note: Results are cached. If new job clones are created in openQA after
@@ -450,7 +450,7 @@ class Approver:
         return JobResult.FAILED
 
     def get_submission_result(
-        self, jobs: list[JobAggr], api: str, sub: int, submission_type: str | None = None
+        self, jobs: list[JobAggr], api: str, sub: int | str, submission_type: str | None = None
     ) -> JobResult:
         """Summarize results for all jobs of a submission."""
         if not jobs:
@@ -496,4 +496,5 @@ class Approver:
         if not sub.submission or not getattr(sub.submission, "project", None):
             log.error("Gitea API error: PR %s has no project (repo_name)", sub.sub)
             return False
-        return approve_pr(self.gitea_token, sub.submission.project, sub.sub, sub.scm_info or "", msg)
+        pr_number = int(str(sub.sub).rsplit(":", 1)[-1]) if ":" in str(sub.sub) else int(sub.sub)
+        return approve_pr(self.gitea_token, sub.submission.project, pr_number, sub.scm_info or "", msg)

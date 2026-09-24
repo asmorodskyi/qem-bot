@@ -436,6 +436,7 @@ def submissions_run(
             help="Submission ID (to process only a single submission)",
         ),
     ] = None,
+    gitea_project: gitea_project_arg = DEFAULT_GITEA_PROJECT,
 ) -> None:
     """Submissions only schedule for Maintenance Submissions in openQA."""
     args = ctx.obj
@@ -444,6 +445,7 @@ def submissions_run(
     args.submission = submission
     args.disable_submissions = False
     args.disable_aggregates = True
+    args.gitea_project = _split_projects(gitea_project)
 
     bot = OpenQABot(args)
     if (ret := bot()) != 0:

@@ -80,7 +80,7 @@ class Submission:
         """Initialize the Submission class."""
         self.rr: int | None = submission["rr_number"]
         self.project: str = submission["project"]
-        self.id: int = submission["number"]
+        self.id: int | str = submission["number"]
         self.rrid: str | None = f"{self.project}:{self.rr}" if self.rr else None
         self.staging: bool = not submission["inReview"]
         self.ongoing: bool = submission["isActive"] and submission["inReviewQAM"] and not submission["approved"]
