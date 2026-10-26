@@ -28,7 +28,7 @@ from openqabot.requests import approve_obs_request
 from openqabot.types.submission_key import SubmissionKey
 
 from .commenter import Commenter
-from .loader.gitea import approve_pr, make_token_header
+from .loader.gitea import approve_pr, get_open_prs, make_token_header
 from .loader.qem import (
     JobAggr,
     SubReq,
@@ -198,6 +198,7 @@ class Approver:
         self.comment = getattr(args, "comment", False)
         self.client = OpenQAInterface()
         self.commenter = Commenter(args, submissions=[])
+        self.tested_commits: dict[tuple[str, str, int], str] = {}
 
     def __call__(self) -> int:
         """Run the approval process.
@@ -271,13 +272,30 @@ class Approver:
         return True
 
     def approvable(self, sub: SubReq) -> bool:
-        """Check if a submission is ready for approval."""
+        """Check if a submission is ready for approval.
+
+        For Gitea PRs only tests of the commit the PR head points at right now
+        count, so results of an earlier commit cannot approve a new one.
+        """
+        commit = self.current_commit(sub)
         try:
             s_jobs = get_submission_settings(
-                sub.sub, sub.project, all_submissions=self.all_submissions, submission_type=sub.type
+                sub.sub,
+                sub.project,
+                all_submissions=self.all_submissions,
+                submission_type=sub.type,
+                scminfo=commit,
             )
         except NoResultsError as e:
             log.info("Approval check for %s:%s skipped: %s", sub.type, sub.sub, e)
+            return False
+        if not s_jobs:
+            log.info(
+                "Approval check for %s:%s skipped: no tests for commit %s yet",
+                sub.type,
+                sub.sub,
+                commit,
+            )
             return False
         try:
             a_jobs = get_aggregate_settings(sub.sub, sub.project, submission_type=sub.type)
@@ -293,8 +311,26 @@ class Approver:
         if not self.dry:
             update_incident_reason(sub.sub, sub.project, sub.type, None)
 
+        if commit:
+            self.tested_commits[sub.type, sub.project, sub.sub] = commit
+
         # everything is green --> add submission to approve list
         return True
+
+    def current_commit(self, sub: SubReq) -> str | None:
+        """Return the commit a Gitea PR head points at, or ``None``.
+
+        Read from Gitea instead of the dashboard so a push is noticed even before
+        the next sync stored it. Without a commit the approval check cannot tell
+        revisions apart and falls back to the dashboard's last synced value.
+        """
+        if sub.type != "git":
+            return None
+        prs = get_open_prs(self.gitea_token, sub.project, number=sub.sub)
+        if not prs:
+            log.warning("PR %s: cannot read the head commit from Gitea in project %s", sub.sub, sub.project)
+            return sub.scminfo
+        return prs[0].commit_sha
 
     @lru_cache(maxsize=512)  # ruff: ignore[cached-instance-method]
     def is_job_marked_acceptable_for_submission(self, job_id: int, sub: int) -> bool:
@@ -479,11 +515,17 @@ class Approver:
             api + str(job_aggr.id), headers=config_module.settings.dashboard_token_dict, params={}
         )
         if not job_results:
-            log.info(
-                "Job setting %s not found for submission %s:%s",
+            # Expected for a job setting openQA never scheduled anything for
+            # (e.g. flavour without matching job templates). It does not fail
+            # the submission, so keep it out of the default log level; a
+            # submission without any jobs at all is reported at info level by
+            # get_submission_result().
+            log.debug(
+                "Job setting %s not found for submission %s:%s (%s tests)",
                 job_aggr.id,
                 submission_type or config.settings.default_submission_type,
                 sub,
+                "aggregate" if job_aggr.aggregate else "submission",
             )
             return JobResult.NO_JOBS
         if not isinstance(job_results, list):
@@ -539,8 +581,9 @@ class Approver:
         return True
 
     def git_approve(self, sub: SubReq, msg: str) -> bool:
-        """Approve a submission in Gitea."""
+        """Approve a submission in Gitea, pinned to the commit that was tested."""
         if not sub.submission or not getattr(sub.submission, "project", None):
             log.error("Gitea API error: PR %s has no project (repo_name)", sub.sub)
             return False
-        return approve_pr(self.gitea_token, sub.submission.project, sub.sub, sub.scm_info or "", msg)
+        commit = self.tested_commits.get((sub.type, sub.project, sub.sub)) or sub.scm_info or ""
+        return approve_pr(self.gitea_token, sub.submission.project, sub.sub, commit, msg)

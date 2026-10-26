@@ -135,11 +135,18 @@ class Submissions(BaseConf):
         except DashboardError:
             return True
 
+        def is_current(job: dict[str, Any]) -> bool:
+            """Check whether one dashboard settings entry covers this revision."""
+            settings = job.get("settings", {})
+            if settings.get("REPOHASH") != revs:
+                return False
+            # A Gitea PR's settings also have to belong to the commit the PR head
+            # is at now; settings recorded before the marker existed count as
+            # stale so they get re-created with it.
+            return not ctx.sub.is_gitea or not ctx.sub.scminfo or settings.get("SCMINFO") == ctx.sub.scminfo
+
         return any(
-            job["flavor"] == ctx.flavor
-            and job["arch"] == ctx.arch
-            and job["version"] == ver
-            and job.get("settings", {}).get("REPOHASH") == revs
+            job["flavor"] == ctx.flavor and job["arch"] == ctx.arch and job["version"] == ver and is_current(job)
             for job in jobs
         )
 
@@ -240,6 +247,9 @@ class Submissions(BaseConf):
             **({"__CI_JOB_URL": cfg.ci_url} if cfg.ci_url else {}),
             **({"KGRAFT": "1"} if sub.livepatch else {}),
             **({"RRID": sub.rrid} if sub.rrid else {}),
+            # Gitea PRs have no release request; the commit the PR head pointed at
+            # when these settings were created is what identifies their round.
+            **({"SCMINFO": sub.scminfo} if sub.is_gitea and sub.scminfo else {}),
         }
 
     @staticmethod

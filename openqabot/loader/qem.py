@@ -32,6 +32,10 @@ class SubReq(NamedTuple):
 
     ``sub``, ``type`` and ``project`` together form the dashboard incident key;
     ``req`` is the OBS release request ID.
+
+    ``scminfo`` is the submission's ``scminfo`` on the dashboard: for a Gitea PR
+    the head commit it pointed at when it was last synced. ``scm_info`` is a
+    separate value: the commit id handed to the Gitea review API.
     """
 
     sub: int
@@ -41,6 +45,7 @@ class SubReq(NamedTuple):
     url: str | None = None
     scm_info: str | None = None
     submission: Submission | None = None
+    scminfo: str | None = None
 
     @classmethod
     def from_dashboard(cls, d: dict) -> SubReq | None:
@@ -76,7 +81,16 @@ class SubReq(NamedTuple):
             )
             submission = None
 
-        return cls(number, rr_number, s_type, project, d.get("url", ""), d.get("scm_info", ""), submission)
+        return cls(
+            number,
+            rr_number,
+            s_type,
+            project,
+            url=d.get("url", ""),
+            scm_info=d.get("scm_info", ""),
+            submission=submission,
+            scminfo=d.get("scminfo") or None,
+        )
 
 
 class JobAggr(NamedTuple):
@@ -203,10 +217,45 @@ def get_single_submission(submission_id: int, project: str, submission_type: str
     return [subreq]
 
 
+def _keep_current_round(
+    settings: list[dict[str, Any]], submission_type: str, scminfo: str | None
+) -> list[dict[str, Any]]:
+    """Drop settings that belong to an earlier revision of the submission.
+
+    Rescheduling a ``version``/``flavor``/``arch`` combination overwrites its
+    settings row, but the jobs of earlier rounds stay linked to it, so the jobs
+    of a submission mix revisions. OBS submissions separate rounds with the
+    monotonically increasing ``RRID``. Gitea PRs have no release request; their
+    settings carry the PR head commit they were scheduled for as ``SCMINFO``.
+    Settings without that marker predate it and are kept, so the filter never
+    empties the result on its own.
+    """
+    if submission_type == "git":
+        if not scminfo:
+            return settings
+        return [s for s in settings if s["settings"].get("SCMINFO", scminfo) == scminfo]
+
+    rrids = sorted([r for r in (s["settings"].get("RRID", None) for s in settings) if r])
+    if not rrids:
+        return settings
+    rrid = rrids[-1]
+    return [s for s in settings if s["settings"].get("RRID", rrid) == rrid]
+
+
 def get_submission_settings(
-    sub: int, project: str, submission_type: str, *, all_submissions: bool = False
+    sub: int,
+    project: str,
+    submission_type: str,
+    *,
+    all_submissions: bool = False,
+    scminfo: str | None = None,
 ) -> list[JobAggr]:
-    """Fetch job settings associated with a submission."""
+    """Fetch job settings associated with a submission.
+
+    With ``scminfo`` set, settings of a Gitea PR that were created for another
+    head commit are dropped, so an empty result means "the current commit has
+    not been tested yet".
+    """
     params = {"project": project, "type": submission_type}
     settings = dashboard.get_json(
         f"api/incident_settings/{sub}", headers=config_module.settings.dashboard_token_dict, params=params
@@ -215,11 +264,7 @@ def get_submission_settings(
         raise NoSubmissionResultsError(sub)
 
     if not all_submissions:
-        rrids = [i["settings"].get("RRID", None) for i in settings]
-        rrid = sorted([r for r in rrids if r])
-        if rrid:
-            rrid = rrid[-1]
-            settings = [s for s in settings if s["settings"].get("RRID", rrid) == rrid]
+        settings = _keep_current_round(settings, submission_type, scminfo)
 
     return [JobAggr(i["id"], aggregate=False, with_aggregate=i["withAggregate"]) for i in settings]
 
@@ -256,9 +301,13 @@ def get_submission_settings_data(number: int, project: str, submission_type: str
     ]
 
 
-def get_submission_results(sub: int, project: str, submission_type: str) -> list[dict[str, Any]]:
+def get_submission_results(
+    sub: int, project: str, submission_type: str, *, scminfo: str | None = None
+) -> list[dict[str, Any]]:
     """Fetch all test results associated with a submission."""
-    settings = get_submission_settings(sub, project, all_submissions=False, submission_type=submission_type)
+    settings = get_submission_settings(
+        sub, project, all_submissions=False, submission_type=submission_type, scminfo=scminfo
+    )
 
     def _get_job_data(job_aggr: JobAggr) -> list[dict[str, Any]]:
         """Fetch job data for a specific settings ID."""

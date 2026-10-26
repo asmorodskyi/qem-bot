@@ -88,6 +88,7 @@ class Submission:
         self.priority: int | None = submission.get("priority")
         self.type: str = submission.get("type") or config.settings.default_submission_type
         self.url: str | None = submission.get("url")
+        self.scminfo: str | None = submission.get("scminfo") or None
 
         self._initialize_channels([item for item in submission.get("channels") or [] if item])
         self._validate_channels()
