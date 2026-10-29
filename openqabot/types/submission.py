@@ -15,6 +15,7 @@ from openqabot.errors import EmptyChannelsError, EmptyPackagesError, NoRepoFound
 from openqabot.loader import gitea
 from openqabot.loader.repohash import RepoOptions, get_max_revision
 
+from .submission_key import SubmissionKey
 from .types import ArchVer, ChannelType, Repos, get_channel_type
 
 log = getLogger("bot.types.submission")
@@ -104,6 +105,11 @@ class Submission:
     def is_gitea(self) -> bool:
         """Check if the submission is from Gitea."""
         return self.type == "git"
+
+    @property
+    def key(self) -> SubmissionKey:
+        """Dashboard incident key of this submission."""
+        return SubmissionKey(self.type, self.project, self.id)
 
     def format_link(self, label: str, url: str, image_url: str | None = None) -> str:
         """Format a link with an optional image badge."""

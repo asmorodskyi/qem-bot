@@ -64,8 +64,8 @@ class Commenter:
                 log.debug(e)
                 return []
 
-        all_jobs = get_jobs(lambda: get_submission_results(sub.id, sub.project, sub.type, scminfo=sub.scminfo))
-        all_jobs += get_jobs(lambda: get_aggregate_results(sub.id, sub.project, sub.type))
+        all_jobs = get_jobs(lambda: get_submission_results(sub.key, scminfo=sub.scminfo))
+        all_jobs += get_jobs(lambda: get_aggregate_results(sub.key))
 
         if res := self.generate_comment(sub, all_jobs):
             handlers = {config.settings.default_submission_type: self.osc_comment, "git": self.gitea_comment}

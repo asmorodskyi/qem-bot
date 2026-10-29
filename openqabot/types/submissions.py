@@ -22,6 +22,7 @@ from .types import ChannelType, ProdVer, Repos, get_channel_type
 
 if TYPE_CHECKING:
     from .submission import Submission
+    from .submission_key import SubmissionKey
 
 log = getLogger("bot.types.submissions")
 
@@ -109,19 +110,18 @@ class Submissions(BaseConf):
         return chan.product, chan.version, chan.arch
 
     @staticmethod
-    def _get_scheduled_jobs(sub_id: int, project: str, submission_type: str) -> list[dict[str, Any]]:
+    def _get_scheduled_jobs(key: SubmissionKey) -> list[dict[str, Any]]:
         """Fetch scheduled jobs from the dashboard, raising DashboardError on failure."""
-        url = settings.dashboard_url("api", "incident_settings", sub_id)
-        params = {"project": project, "type": submission_type}
+        url = settings.dashboard_url("api", "incident_settings", key.number)
         try:
-            res = retried_requests.get(url, headers=settings.dashboard_token_dict, params=params).json()
+            res = retried_requests.get(url, headers=settings.dashboard_token_dict, params=key.to_dashboard_params()).json()
         except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
-            log.exception("Dashboard API error: Could not retrieve scheduled jobs for submission %s", sub_id)
+            log.exception("Dashboard API error: Could not retrieve scheduled jobs for submission %s", key)
             raise DashboardError from e
         return res if isinstance(res, list) else []
 
     @staticmethod
-    def is_scheduled_job(ctx: SubContext, ver: str, submission_type: str) -> bool:
+    def is_scheduled_job(ctx: SubContext, ver: str) -> bool:
         """Check if a job is already scheduled in the dashboard.
 
         If the dashboard API fails, treat the job as already scheduled so a
@@ -131,7 +131,7 @@ class Submissions(BaseConf):
             return False
 
         try:
-            jobs = Submissions._get_scheduled_jobs(ctx.sub.id, ctx.sub.project, submission_type)
+            jobs = Submissions._get_scheduled_jobs(ctx.sub.key)
         except DashboardError:
             return True
 
@@ -219,9 +219,7 @@ class Submissions(BaseConf):
         if self._is_invalid_package_or_channel(ctx, matches):
             return True
 
-        if not cfg.ignore_onetime and self.is_scheduled_job(
-            ctx, self.settings["VERSION"], submission_type=ctx.sub.type
-        ):
+        if not cfg.ignore_onetime and self.is_scheduled_job(ctx, self.settings["VERSION"]):
             log.info("Submission %s already scheduled for %s on %s", ctx.sub, ctx.flavor, ctx.arch)
             return True
 
@@ -297,8 +295,9 @@ class Submissions(BaseConf):
         else:
             url = f"{settings.smelt_url}/incident/{sub.id}"
         settings_data["__SOURCE_CHANGE_URL"] = url
-        query = urlencode({"project": sub.project, "type": sub.type})
-        settings_data["__DASHBOARD_INCIDENT_URL"] = f"{settings.dashboard_url('incident', sub.id)}?{query}"
+        key = sub.key
+        query = urlencode(key.to_dashboard_params())
+        settings_data["__DASHBOARD_INCIDENT_URL"] = f"{settings.dashboard_url('incident', key.number)}?{query}"
 
     @staticmethod
     def apply_pc_images(settings: dict[str, Any]) -> dict[str, Any] | None:

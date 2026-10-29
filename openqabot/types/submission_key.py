@@ -53,8 +53,21 @@ class SubmissionKey:
         return {"project": self.project, "type": self.type}
 
     @classmethod
+    def from_dashboard(cls, incident: dict[str, Any]) -> SubmissionKey:
+        """Return the key of a dashboard incident record.
+
+        The record must carry the full identity: a ``KeyError`` is raised when
+        ``type``, ``project`` or ``number`` is missing, so callers that tolerate
+        a partial record have to check the fields first.
+        """
+        return cls(incident["type"], incident["project"], incident["number"])
+
+    @classmethod
     def from_submission_dict(cls, submission: dict[str, Any]) -> SubmissionKey:
-        """Return the key of a submission record built by ``_init_submission_dict``."""
+        """Return the key of a submission record built by ``_init_submission_dict``.
+
+        Such records are always Gitea PRs and do not carry a ``type`` yet.
+        """
         return cls(GITEA_TYPE, submission["project"], submission["number"])
 
     def __str__(self) -> str:
