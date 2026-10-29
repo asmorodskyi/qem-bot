@@ -755,11 +755,6 @@ def _build_submission_record(
 
     add_comments_and_referenced_build_results(submission, comments, fake_data=fake_data)
 
-    # The revision that is being tested is the PR head. It is stored so the
-    # scheduler can stamp it into the openQA job settings and the approver can
-    # tell tests of the current head from tests of an earlier commit.
-    submission["scminfo"] = pr.commit_sha
-
     if not _validate_submission(submission, pr.number, only_successful_builds=only_successful_builds):
         return None
 

@@ -33,9 +33,9 @@ class SubReq(NamedTuple):
     ``sub``, ``type`` and ``project`` together form the dashboard incident key;
     ``req`` is the OBS release request ID.
 
-    ``scminfo`` is the submission's ``scminfo`` on the dashboard: for a Gitea PR
-    the head commit it pointed at when it was last synced. ``scm_info`` is a
-    separate value: the commit id handed to the Gitea review API.
+    ``scminfo`` is the submission's ``scminfo`` on the dashboard: the revision
+    OBS reported for the build of a Gitea PR. ``scm_info`` is a separate value
+    read from a dashboard key the dashboard never sends, so it stays empty.
     """
 
     sub: int
@@ -226,9 +226,9 @@ def _keep_current_round(
     settings row, but the jobs of earlier rounds stay linked to it, so the jobs
     of a submission mix revisions. OBS submissions separate rounds with the
     monotonically increasing ``RRID``. Gitea PRs have no release request; their
-    settings carry the PR head commit they were scheduled for as ``SCMINFO``.
-    Settings without that marker predate it and are kept, so the filter never
-    empties the result on its own.
+    settings carry the commit OBS built for them as ``SCMINFO``. Settings without
+    that marker predate it and are kept, so the filter never empties the result on
+    its own.
     """
     if submission_type == "git":
         if not scminfo:
@@ -253,8 +253,8 @@ def get_submission_settings(
     """Fetch job settings associated with a submission.
 
     With ``scminfo`` set, settings of a Gitea PR that were created for another
-    head commit are dropped, so an empty result means "the current commit has
-    not been tested yet".
+    revision are dropped, so an empty result means "the recorded commit has no
+    settings yet".
     """
     params = {"project": project, "type": submission_type}
     settings = dashboard.get_json(

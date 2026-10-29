@@ -198,7 +198,6 @@ class Approver:
         self.comment = getattr(args, "comment", False)
         self.client = OpenQAInterface()
         self.commenter = Commenter(args, submissions=[])
-        self.tested_commits: dict[tuple[str, str, int], str] = {}
 
     def __call__(self) -> int:
         """Run the approval process.
@@ -274,28 +273,26 @@ class Approver:
     def approvable(self, sub: SubReq) -> bool:
         """Check if a submission is ready for approval.
 
-        For Gitea PRs only tests of the commit the PR head points at right now
-        count, so results of an earlier commit cannot approve a new one.
+        A Gitea PR is approved only while its head is the commit OBS built and
+        openQA tested, so a push OBS has not caught up with cannot be approved
+        with the results of the previous build.
         """
-        commit = self.current_commit(sub)
+        if not self.head_matches_tested_commit(sub):
+            return False
+
         try:
             s_jobs = get_submission_settings(
                 sub.sub,
                 sub.project,
                 all_submissions=self.all_submissions,
                 submission_type=sub.type,
-                scminfo=commit,
+                scminfo=sub.scminfo,
             )
         except NoResultsError as e:
             log.info("Approval check for %s:%s skipped: %s", sub.type, sub.sub, e)
             return False
         if not s_jobs:
-            log.info(
-                "Approval check for %s:%s skipped: no tests for commit %s yet",
-                sub.type,
-                sub.sub,
-                commit,
-            )
+            log.info("Approval check for %s:%s skipped: no tests for the tested commit yet", sub.type, sub.sub)
             return False
         try:
             a_jobs = get_aggregate_settings(sub.sub, sub.project, submission_type=sub.type)
@@ -311,26 +308,43 @@ class Approver:
         if not self.dry:
             update_incident_reason(sub.sub, sub.project, sub.type, None)
 
-        if commit:
-            self.tested_commits[sub.type, sub.project, sub.sub] = commit
-
         # everything is green --> add submission to approve list
         return True
 
-    def current_commit(self, sub: SubReq) -> str | None:
-        """Return the commit a Gitea PR head points at, or ``None``.
+    def head_matches_tested_commit(self, sub: SubReq) -> bool:
+        """Check that a PR head still is the commit whose tests are recorded.
 
-        Read from Gitea instead of the dashboard so a push is noticed even before
-        the next sync stored it. Without a commit the approval check cannot tell
-        revisions apart and falls back to the dashboard's last synced value.
+        ``SubReq.scminfo`` is the revision OBS reported for the build of the PR,
+        while the head is read live from Gitea so a push is noticed before the
+        next sync stores it. A PR that moved to another commit than the tested
+        one, or whose head cannot be read, is left unapproved until the new head
+        is built and tested. Without a revision from OBS there is nothing to
+        compare against and the check is skipped.
         """
         if sub.type != "git":
-            return None
+            return True
         prs = get_open_prs(self.gitea_token, sub.project, number=sub.sub)
-        if not prs:
+        head = prs[0].commit_sha if prs else ""
+        if not head or head == "unknown":
             log.warning("PR %s: cannot read the head commit from Gitea in project %s", sub.sub, sub.project)
-            return sub.scminfo
-        return prs[0].commit_sha
+            return False
+        if not sub.scminfo:
+            log.debug(
+                "PR %s: no revision from OBS recorded for %s:%s, revisions cannot be told apart",
+                sub.sub,
+                sub.type,
+                sub.project,
+            )
+            return True
+        if head != sub.scminfo:
+            log.info(
+                "PR %s: head commit %s is not the tested commit %s, approval deferred",
+                sub.sub,
+                head,
+                sub.scminfo,
+            )
+            return False
+        return True
 
     @lru_cache(maxsize=512)  # ruff: ignore[cached-instance-method]
     def is_job_marked_acceptable_for_submission(self, job_id: int, sub: int) -> bool:
@@ -585,5 +599,4 @@ class Approver:
         if not sub.submission or not getattr(sub.submission, "project", None):
             log.error("Gitea API error: PR %s has no project (repo_name)", sub.sub)
             return False
-        commit = self.tested_commits.get((sub.type, sub.project, sub.sub)) or sub.scm_info or ""
-        return approve_pr(self.gitea_token, sub.submission.project, sub.sub, commit, msg)
+        return approve_pr(self.gitea_token, sub.submission.project, sub.sub, sub.scminfo or "", msg)

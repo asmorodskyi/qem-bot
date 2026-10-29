@@ -140,9 +140,9 @@ class Submissions(BaseConf):
             settings = job.get("settings", {})
             if settings.get("REPOHASH") != revs:
                 return False
-            # A Gitea PR's settings also have to belong to the commit the PR head
-            # is at now; settings recorded before the marker existed count as
-            # stale so they get re-created with it.
+            # A Gitea PR's settings also have to belong to the commit OBS built
+            # for it; settings recorded before the marker existed count as stale
+            # so they get re-created with it.
             return not ctx.sub.is_gitea or not ctx.sub.scminfo or settings.get("SCMINFO") == ctx.sub.scminfo
 
         return any(
@@ -247,8 +247,8 @@ class Submissions(BaseConf):
             **({"__CI_JOB_URL": cfg.ci_url} if cfg.ci_url else {}),
             **({"KGRAFT": "1"} if sub.livepatch else {}),
             **({"RRID": sub.rrid} if sub.rrid else {}),
-            # Gitea PRs have no release request; the commit the PR head pointed at
-            # when these settings were created is what identifies their round.
+            # Gitea PRs have no release request; the commit OBS built for the PR
+            # is what identifies their round.
             **({"SCMINFO": sub.scminfo} if sub.is_gitea and sub.scminfo else {}),
         }
 
